@@ -638,3 +638,50 @@ func (t *transaction) addScopeInfo(key resourceKey, ls labels.Labels) {
 func getSeriesRef(bytes []byte, ls labels.Labels, mtype pmetric.MetricType) (uint64, []byte) {
 	return ls.HashWithoutLabels(bytes, getSortedNotUsefulLabels(mtype)...)
 }
+
+// AppendV2 dispatches a unified AppenderV2-style call to the appropriate v1
+// methods: AppendSTZeroSample / AppendHistogramSTZeroSample for start
+// timestamps, Append / AppendHistogram for the data point, and
+// AppendExemplar for exemplars.
+func (t *transaction) AppendV2(
+	ref storage.SeriesRef,
+	ls labels.Labels,
+	stMs, atMs int64,
+	val float64,
+	h *histogram.Histogram,
+	fh *histogram.FloatHistogram,
+	opts storage.AOptions,
+) (storage.SeriesRef, error) {
+	isHistogram := h != nil || fh != nil
+
+	if stMs > 0 {
+		if isHistogram {
+			if _, err := t.AppendHistogramSTZeroSample(ref, ls, atMs, stMs, h, fh); err != nil {
+				return 0, err
+			}
+		} else {
+			if _, err := t.AppendSTZeroSample(ref, ls, atMs, stMs); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	var sRef storage.SeriesRef
+	var err error
+	if isHistogram {
+		sRef, err = t.AppendHistogram(ref, ls, atMs, h, fh)
+	} else {
+		sRef, err = t.Append(ref, ls, atMs, val)
+	}
+	if err != nil {
+		return sRef, err
+	}
+
+	for _, e := range opts.Exemplars {
+		if _, err := t.AppendExemplar(ref, ls, e); err != nil {
+			return sRef, err
+		}
+	}
+
+	return sRef, nil
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/metadata"
 	"github.com/prometheus/prometheus/scrape"
+	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/tsdbutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2052,4 +2053,159 @@ func newTxn(t *testing.T, useMetadata bool) *transaction {
 	// quiet logger
 	settings.Logger = zap.NewNop()
 	return newTransaction(ctx, sink, labels.EmptyLabels(), settings, newObs(t), false, useMetadata)
+}
+
+// ---- AppenderV2 wrapper tests ----
+
+// TestAppendableImplementsBothInterfaces is a compile-time check that
+// *appendable satisfies both storage.Appendable and storage.AppendableV2.
+func TestAppendableImplementsBothInterfaces(t *testing.T) {
+	var _ storage.Appendable = (*appendable)(nil)
+	var _ storage.AppendableV2 = (*appendable)(nil)
+	// If this compiles, the interfaces are satisfied.
+	t.Log("appendable implements both storage.Appendable and storage.AppendableV2")
+}
+
+func TestAppenderV2WrapperCommitWithoutAdding(t *testing.T) {
+	txn := newTransaction(scrapeCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+	w := &appenderV2Wrapper{txn}
+	assert.NoError(t, w.Commit())
+}
+
+func TestAppenderV2WrapperAppendFloat(t *testing.T) {
+	sink := new(consumertest.MetricsSink)
+	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+	w := &appenderV2Wrapper{txn}
+
+	ls := labels.FromStrings(
+		model.InstanceLabel, "localhost:8080",
+		model.JobLabel, "test",
+		model.MetricNameLabel, "counter_test",
+	)
+
+	ref, err := w.Append(0, ls, 0, ts, 42.0, nil, nil, storage.AOptions{})
+	require.NoError(t, err)
+	assert.NotZero(t, ref)
+
+	require.NoError(t, w.Commit())
+	mds := sink.AllMetrics()
+	require.Len(t, mds, 1)
+	require.Equal(t, 1, mds[0].MetricCount())
+}
+
+func TestAppenderV2WrapperAppendHistogram(t *testing.T) {
+	sink := new(consumertest.MetricsSink)
+	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+	w := &appenderV2Wrapper{txn}
+
+	ls := labels.FromStrings(
+		model.InstanceLabel, "localhost:8080",
+		model.JobLabel, "test",
+		model.MetricNameLabel, "hist_test",
+	)
+
+	h := tsdbutil.GenerateTestHistogram(1)
+	ref, err := w.Append(0, ls, 0, ts, 0, h, nil, storage.AOptions{})
+	require.NoError(t, err)
+	assert.NotZero(t, ref)
+
+	require.NoError(t, w.Commit())
+	mds := sink.AllMetrics()
+	require.Len(t, mds, 1)
+	require.Equal(t, 1, mds[0].MetricCount())
+	require.Equal(t, pmetric.MetricTypeExponentialHistogram,
+		mds[0].ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Type())
+}
+
+func TestAppenderV2WrapperAppendWithStartTimestamp(t *testing.T) {
+	sink := new(consumertest.MetricsSink)
+	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+	w := &appenderV2Wrapper{txn}
+
+	ls := labels.FromStrings(
+		model.InstanceLabel, "localhost:8080",
+		model.JobLabel, "test",
+		model.MetricNameLabel, "counter_test",
+	)
+
+	var stMs int64 = 100
+	ref, err := w.Append(0, ls, stMs, ts, 42.0, nil, nil, storage.AOptions{})
+	require.NoError(t, err)
+	assert.NotZero(t, ref)
+
+	require.NoError(t, w.Commit())
+	mds := sink.AllMetrics()
+	require.Len(t, mds, 1)
+	dp := mds[0].ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Sum().DataPoints().At(0)
+	require.Equal(t, pcommon.NewTimestampFromTime(time.UnixMilli(stMs)), dp.StartTimestamp())
+}
+
+func TestAppenderV2WrapperAppendWithExemplars(t *testing.T) {
+	sink := new(consumertest.MetricsSink)
+	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+	w := &appenderV2Wrapper{txn}
+
+	ls := labels.FromStrings(
+		model.InstanceLabel, "localhost:8080",
+		model.JobLabel, "test",
+		model.MetricNameLabel, "counter_test",
+	)
+
+	opts := storage.AOptions{
+		Exemplars: []exemplar.Exemplar{
+			{
+				Labels: labels.FromStrings("key", "value"),
+				Value:  1.0,
+				Ts:     ts,
+			},
+		},
+	}
+
+	ref, err := w.Append(0, ls, 0, ts, 42.0, nil, nil, opts)
+	require.NoError(t, err)
+	assert.NotZero(t, ref)
+
+	require.NoError(t, w.Commit())
+	mds := sink.AllMetrics()
+	require.Len(t, mds, 1)
+	dp := mds[0].ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Sum().DataPoints().At(0)
+	require.Equal(t, 1, dp.Exemplars().Len())
+	require.Equal(t, "value", dp.Exemplars().At(0).FilteredAttributes().AsRaw()["key"])
+}
+
+func TestAppenderV2WrapperAppendContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelledCtx := scrape.ContextWithMetricMetadataStore(
+		scrape.ContextWithTarget(ctx, target),
+		testMetadataStore(testMetadata))
+	cancel()
+
+	txn := newTransaction(cancelledCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+	w := &appenderV2Wrapper{txn}
+
+	ls := labels.FromStrings(
+		model.InstanceLabel, "localhost:8080",
+		model.JobLabel, "test",
+		model.MetricNameLabel, "counter_test",
+	)
+
+	_, err := w.Append(0, ls, 0, ts, 1.0, nil, nil, storage.AOptions{})
+	assert.ErrorIs(t, err, errTransactionAborted)
+}
+
+func TestAppenderV2WrapperAppendDuplicateLabels(t *testing.T) {
+	txn := newTransaction(scrapeCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+	w := &appenderV2Wrapper{txn}
+
+	dupLabels := labels.FromStrings(
+		model.InstanceLabel, "0.0.0.0:8855",
+		model.JobLabel, "test",
+		model.MetricNameLabel, "counter_test",
+		"a", "1",
+		"a", "6",
+		"z", "9",
+	)
+
+	_, err := w.Append(0, dupLabels, 0, ts, 1.0, nil, nil, storage.AOptions{})
+	assert.ErrorContains(t, err, `invalid sample: non-unique label names: "a"`)
 }

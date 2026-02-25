@@ -6,6 +6,7 @@ package internal // import "github.com/open-telemetry/opentelemetry-collector-co
 import (
 	"context"
 
+	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"go.opentelemetry.io/collector/consumer"
@@ -14,6 +15,7 @@ import (
 )
 
 // appendable translates Prometheus scraping diffs into OpenTelemetry format.
+// It implements both storage.Appendable (v1) and storage.AppendableV2.
 type appendable struct {
 	sink           consumer.Metrics
 	useMetadata    bool
@@ -24,14 +26,15 @@ type appendable struct {
 	obsrecv  *receiverhelper.ObsReport
 }
 
-// NewAppendable returns a storage.Appendable instance that emits metrics to the sink.
+// NewAppendable returns an appendable instance that emits metrics to the sink.
+// The returned value implements both storage.Appendable and storage.AppendableV2.
 func NewAppendable(
 	sink consumer.Metrics,
 	set receiver.Settings,
 	useMetadata bool,
 	externalLabels labels.Labels,
 	trimSuffixes bool,
-) (storage.Appendable, error) {
+) (*appendable, error) {
 	obsrecv, err := receiverhelper.NewObsReport(receiverhelper.ObsReportSettings{ReceiverID: set.ID, Transport: transport, ReceiverCreateSettings: set})
 	if err != nil {
 		return nil, err
@@ -49,4 +52,27 @@ func NewAppendable(
 
 func (o *appendable) Appender(ctx context.Context) storage.Appender {
 	return newTransaction(ctx, o.sink, o.externalLabels, o.settings, o.obsrecv, o.trimSuffixes, o.useMetadata)
+}
+
+func (o *appendable) AppenderV2(ctx context.Context) storage.AppenderV2 {
+	txn := newTransaction(ctx, o.sink, o.externalLabels, o.settings, o.obsrecv, o.trimSuffixes, o.useMetadata)
+	return &appenderV2Wrapper{txn}
+}
+
+// appenderV2Wrapper adapts a transaction to storage.AppenderV2.
+// Commit and Rollback are promoted from the embedded *transaction.
+type appenderV2Wrapper struct {
+	*transaction
+}
+
+func (w *appenderV2Wrapper) Append(
+	ref storage.SeriesRef,
+	ls labels.Labels,
+	stMs, atMs int64,
+	val float64,
+	h *histogram.Histogram,
+	fh *histogram.FloatHistogram,
+	opts storage.AOptions,
+) (storage.SeriesRef, error) {
+	return w.transaction.AppendV2(ref, ls, stMs, atMs, val, h, fh, opts)
 }
