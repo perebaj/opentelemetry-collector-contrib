@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/collector/receiver/receiverhelper"
 )
 
+// appendableV2 is a wrapper around the appendable struct that implements the storage.AppendableV2 interface.
 type appendableV2 struct {
 	sink           consumer.Metrics
 	useMetadata    bool
@@ -45,6 +46,7 @@ func NewAppendableV2(
 	}, nil
 }
 
+// AppenderV2 implements the storage.AppendableV2 interface.
 func (a *appendableV2) AppenderV2(ctx context.Context) storage.AppenderV2 {
 	return newTransactionV2(ctx, a.sink, a.externalLabels, a.settings, a.obsrecv, a.trimSuffixes, a.useMetadata)
 }
