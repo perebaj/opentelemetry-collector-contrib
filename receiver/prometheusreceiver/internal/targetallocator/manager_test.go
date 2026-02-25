@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
-	otmetadata "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver/internal/metadata"
+	mdata "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver/internal/metadata"
 )
 
 // nopAppendable is a minimal no-op implementation of storage.Appendable for tests. As scrape.NewManager() doesn't accept a nil value for both appendableV1 and appendableV2, we need to provide a minimal implementation.
@@ -84,7 +84,7 @@ func TestNewManager(t *testing.T) {
 		},
 	}
 
-	manager := NewManager(receivertest.NewNopSettings(otmetadata.Type), cfg, promCfg)
+	manager := NewManager(receivertest.NewNopSettings(mdata.Type), cfg, promCfg)
 
 	assert.NotNil(t, manager)
 	assert.Equal(t, cfg, manager.cfg)
@@ -115,7 +115,7 @@ func TestManagerShutdown(t *testing.T) {
 	// Create a logger with observer to capture logs
 	core, logs := observer.New(zapcore.InfoLevel)
 	logger := zap.New(core)
-	settings := receivertest.NewNopSettings(otmetadata.Type)
+	settings := receivertest.NewNopSettings(mdata.Type)
 	settings.Logger = logger
 
 	manager := NewManager(settings, cfg, promCfg)
