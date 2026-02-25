@@ -11,7 +11,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/model/exemplar"
-	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/scrape"
 	"github.com/prometheus/prometheus/storage"
@@ -26,26 +25,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
-
-// v2 helper wrappers to call the unified Append with the same ergonomics as v1. Functions used to keep the tests backward compatible with the v1 tests.
-func appendV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, atMs int64, val float64) (storage.SeriesRef, error) {
-	return tr.Append(ref, ls, 0, atMs, val, nil, nil, storage.AOptions{})
-}
-
-// appendWithSTZeroSampleV2 is a wrapper around the Append method that sets the start timestamp (stMs) to the value passed as parameter. Function used to keep the tests backward compatible with the v1 tests.
-func appendWithSTZeroSampleV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, stMs, atMs int64, val float64) (storage.SeriesRef, error) {
-	return tr.Append(ref, ls, stMs, atMs, val, nil, nil, storage.AOptions{})
-}
-
-// appendHistogramWithSTZeroSampleV2 is a wrapper around the Append method that sets the start timestamp (stMs) to the value passed as parameter. Function used to keep the tests backward compatible with the v1 tests.
-func appendHistogramWithSTZeroSampleV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, stMs, atMs int64, h *histogram.Histogram, fh *histogram.FloatHistogram) (storage.SeriesRef, error) {
-	return tr.Append(ref, ls, stMs, atMs, 0, h, fh, storage.AOptions{})
-}
-
-// appendWithExemplarsV2 is a wrapper around the Append method that sets the exemplars to the value passed as parameter. Function used to keep the tests backward compatible with the v1 tests.
-func appendWithExemplarsV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, atMs int64, val float64, exemplars []exemplar.Exemplar) (storage.SeriesRef, error) {
-	return tr.Append(ref, ls, 0, atMs, val, nil, nil, storage.AOptions{Exemplars: exemplars})
-}
 
 func newTxnV2(t *testing.T, useMetadata bool) *transactionV2 {
 	ctx := t.Context()
@@ -89,7 +68,7 @@ func TestTransactionV2RollbackDoesNothing(t *testing.T) {
 func TestTransactionV2AppendNoTarget(t *testing.T) {
 	badLabels := labels.FromStrings(model.MetricNameLabel, "counter_test")
 	tr := newTransactionV2(scrapeCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	_, err := appendV2(tr, 0, badLabels, time.Now().Unix()*1000, 1.0)
+	_, err := tr.Append(0, badLabels, 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.Error(t, err)
 }
 
@@ -100,18 +79,18 @@ func TestTransactionV2AppendNoMetricName(t *testing.T) {
 	})
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	_, err := appendV2(tr, 0, jobNotFoundLb, time.Now().Unix()*1000, 1.0)
+	_, err := tr.Append(0, jobNotFoundLb, 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.ErrorIs(t, err, errMetricNameNotFound)
 	assert.ErrorIs(t, tr.Commit(), errNoDataToBuild)
 }
 
 func TestTransactionV2AppendEmptyMetricName(t *testing.T) {
 	tr := newTransactionV2(scrapeCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	_, err := appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err := tr.Append(0, labels.FromMap(map[string]string{
 		model.InstanceLabel:   "localhost:8080",
 		model.JobLabel:        "test2",
 		model.MetricNameLabel: "",
-	}), time.Now().Unix()*1000, 1.0)
+	}), 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.ErrorIs(t, err, errMetricNameNotFound)
 }
 
@@ -128,7 +107,7 @@ func TestTransactionV2AppendDuplicateLabels(t *testing.T) {
 		"z", "9",
 	)
 
-	_, err := appendV2(tr, 0, dupLabels, 1917, 1.0)
+	_, err := tr.Append(0, dupLabels, 0, 1917, 1.0, nil, nil, storage.AOptions{})
 	assert.ErrorContains(t, err, `invalid sample: non-unique label names: "a"`)
 }
 
@@ -138,11 +117,11 @@ func TestTransactionV2AppendContextCancelled(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(ctx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendV2(tr, 0, labels.FromStrings(
+	_, err := tr.Append(0, labels.FromStrings(
 		model.InstanceLabel, "localhost:8080",
 		model.JobLabel, "test",
 		model.MetricNameLabel, "counter_test",
-	), time.Now().Unix()*1000, 1.0)
+	), 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.ErrorIs(t, err, errTransactionAborted)
 }
 
@@ -151,17 +130,17 @@ func TestTransactionV2AppendContextCancelled(t *testing.T) {
 func TestTransactionV2AppendResource(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	_, err := appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err := tr.Append(0, labels.FromMap(map[string]string{
 		model.InstanceLabel:   "localhost:8080",
 		model.JobLabel:        "test",
 		model.MetricNameLabel: "counter_test",
-	}), time.Now().Unix()*1000, 1.0)
+	}), 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
-	_, err = appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err = tr.Append(0, labels.FromMap(map[string]string{
 		model.InstanceLabel:   "localhost:8080",
 		model.JobLabel:        "test",
 		model.MetricNameLabel: startTimeMetricName,
-	}), time.Now().UnixMilli(), 1.0)
+	}), 0, time.Now().UnixMilli(), 1.0, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
 	assert.NoError(t, tr.Commit())
 
@@ -175,17 +154,17 @@ func TestTransactionV2AppendResource(t *testing.T) {
 func TestTransactionV2AppendMultipleResources(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	_, err := appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err := tr.Append(0, labels.FromMap(map[string]string{
 		model.InstanceLabel:   "localhost:8080",
 		model.JobLabel:        "test-1",
 		model.MetricNameLabel: "counter_test",
-	}), time.Now().Unix()*1000, 1.0)
+	}), 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
-	_, err = appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err = tr.Append(0, labels.FromMap(map[string]string{
 		model.InstanceLabel:   "localhost:8080",
 		model.JobLabel:        "test-2",
 		model.MetricNameLabel: startTimeMetricName,
-	}), time.Now().UnixMilli(), 1.0)
+	}), 0, time.Now().UnixMilli(), 1.0, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
 	assert.NoError(t, tr.Commit())
 
@@ -218,11 +197,11 @@ func TestTransactionV2AppendMultipleResources(t *testing.T) {
 func TestReceiverVersionAndNameAreAttachedV2(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	_, err := appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err := tr.Append(0, labels.FromMap(map[string]string{
 		model.InstanceLabel:   "localhost:8080",
 		model.JobLabel:        "test",
 		model.MetricNameLabel: "counter_test",
-	}), time.Now().Unix()*1000, 1.0)
+	}), 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
 	assert.NoError(t, tr.Commit())
 
@@ -249,7 +228,7 @@ func TestTransactionV2AppendHistogramNoLe(t *testing.T) {
 		model.MetricNameLabel, "hist_test_bucket",
 	)
 
-	_, err := appendV2(tr, 0, goodLabels, 1917, 1.0)
+	_, err := tr.Append(0, goodLabels, 0, 1917, 1.0, nil, nil, storage.AOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, observedLogs.Len())
 	assert.Equal(t, 1, observedLogs.FilterMessage("failed to add datapoint").Len())
@@ -273,7 +252,7 @@ func TestTransactionV2AppendSummaryNoQuantile(t *testing.T) {
 		model.MetricNameLabel, "summary_test",
 	)
 
-	_, err := appendV2(tr, 0, goodLabels, 1917, 1.0)
+	_, err := tr.Append(0, goodLabels, 0, 1917, 1.0, nil, nil, storage.AOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, observedLogs.Len())
 	assert.Equal(t, 1, observedLogs.FilterMessage("failed to add datapoint").Len())
@@ -291,11 +270,11 @@ func TestTransactionV2AppendValidAndInvalid(t *testing.T) {
 	receiverSettings.Logger = zap.New(core)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receiverSettings, nopObsRecv(t), false, true)
 
-	_, err := appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err := tr.Append(0, labels.FromMap(map[string]string{
 		model.InstanceLabel:   "localhost:8080",
 		model.JobLabel:        "test",
 		model.MetricNameLabel: "counter_test",
-	}), time.Now().Unix()*1000, 1.0)
+	}), 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
 
 	summarylabels := labels.FromStrings(
@@ -304,7 +283,7 @@ func TestTransactionV2AppendValidAndInvalid(t *testing.T) {
 		model.MetricNameLabel, "summary_test",
 	)
 
-	_, err = appendV2(tr, 0, summarylabels, 1917, 1.0)
+	_, err = tr.Append(0, summarylabels, 0, 1917, 1.0, nil, nil, storage.AOptions{})
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, observedLogs.Len())
@@ -343,9 +322,9 @@ func TestTransactionV2AppendWithEmptyLabelArrayFallbackToTargetLabels(t *testing
 
 	tr := newTransactionV2(ctx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendV2(tr, 0, labels.FromMap(map[string]string{
+	_, err := tr.Append(0, labels.FromMap(map[string]string{
 		model.MetricNameLabel: "counter_test",
-	}), time.Now().Unix()*1000, 1.0)
+	}), 0, time.Now().Unix()*1000, 1.0, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
 }
 
@@ -355,7 +334,7 @@ func TestAppendSTZeroSampleNoLabelsV2(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendWithSTZeroSampleV2(tr, 0, labels.FromStrings(), 100, 0, 0)
+	_, err := tr.Append(0, labels.FromStrings(), 100, 0, 0, nil, nil, storage.AOptions{})
 	assert.ErrorContains(t, err, "job or instance cannot be found from labels")
 }
 
@@ -363,7 +342,7 @@ func TestAppendHistogramCTZeroSampleNoLabelsV2(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendHistogramWithSTZeroSampleV2(tr, 0, labels.FromStrings(), 100, 0, nil, nil)
+	_, err := tr.Append(0, labels.FromStrings(), 100, 0, 0, nil, nil, storage.AOptions{})
 	assert.ErrorContains(t, err, "job or instance cannot be found from labels")
 }
 
@@ -371,13 +350,13 @@ func TestAppendSTZeroSampleDuplicateLabelsV2(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendWithSTZeroSampleV2(tr, 0, labels.FromStrings(
+	_, err := tr.Append(0, labels.FromStrings(
 		model.InstanceLabel, "0.0.0.0:8855",
 		model.JobLabel, "test",
 		model.MetricNameLabel, "counter_test",
 		"a", "b",
 		"a", "c",
-	), 100, 0, 0)
+	), 100, 0, 0, nil, nil, storage.AOptions{})
 	assert.ErrorContains(t, err, "invalid sample: non-unique label names")
 }
 
@@ -385,13 +364,13 @@ func TestAppendHistogramCTZeroSampleDuplicateLabelsV2(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendHistogramWithSTZeroSampleV2(tr, 0, labels.FromStrings(
+	_, err := tr.Append(0, labels.FromStrings(
 		model.InstanceLabel, "0.0.0.0:8855",
 		model.JobLabel, "test",
 		model.MetricNameLabel, "hist_test_bucket",
 		"a", "b",
 		"a", "c",
-	), 100, 0, nil, nil)
+	), 100, 0, 0, nil, nil, storage.AOptions{})
 	assert.ErrorContains(t, err, "invalid sample: non-unique label names")
 }
 
@@ -399,11 +378,11 @@ func TestAppendSTZeroSampleEmptyMetricNameV2(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendWithSTZeroSampleV2(tr, 0, labels.FromStrings(
+	_, err := tr.Append(0, labels.FromStrings(
 		model.InstanceLabel, "0.0.0.0:8855",
 		model.JobLabel, "test",
 		model.MetricNameLabel, "",
-	), 100, 0, 0)
+	), 100, 0, 0, nil, nil, storage.AOptions{})
 	assert.ErrorContains(t, err, "metricName not found")
 }
 
@@ -411,11 +390,11 @@ func TestAppendHistogramCTZeroSampleEmptyMetricNameV2(t *testing.T) {
 	sink := new(consumertest.MetricsSink)
 	tr := newTransactionV2(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
 
-	_, err := appendHistogramWithSTZeroSampleV2(tr, 0, labels.FromStrings(
+	_, err := tr.Append(0, labels.FromStrings(
 		model.InstanceLabel, "0.0.0.0:8855",
 		model.JobLabel, "test",
 		model.MetricNameLabel, "",
-	), 100, 0, nil, nil)
+	), 100, 0, 0, nil, nil, storage.AOptions{})
 	assert.ErrorContains(t, err, "metricName not found")
 }
 
@@ -426,11 +405,11 @@ func TestAppendSTZeroSampleV2(t *testing.T) {
 	var atMs, ctMs int64
 	atMs, ctMs = 200, 100
 
-	_, err := appendWithSTZeroSampleV2(tr, 0, labels.FromStrings(
+	_, err := tr.Append(0, labels.FromStrings(
 		model.InstanceLabel, "0.0.0.0:8855",
 		model.JobLabel, "test",
 		model.MetricNameLabel, "counter_test",
-	), ctMs, atMs, 100)
+	), ctMs, atMs, 100, nil, nil, storage.AOptions{})
 	assert.NoError(t, err)
 
 	assert.NoError(t, tr.Commit())
@@ -455,11 +434,11 @@ func TestAppendHistogramCTZeroSampleV2(t *testing.T) {
 	atMs, ctMs = 200, 100
 
 	h := tsdbutil.GenerateTestHistogram(1)
-	_, err := appendHistogramWithSTZeroSampleV2(tr, 0, labels.FromStrings(
+	_, err := tr.Append(0, labels.FromStrings(
 		model.InstanceLabel, "0.0.0.0:8855",
 		model.JobLabel, "test",
 		model.MetricNameLabel, "hist_test_bucket",
-	), ctMs, atMs, h, nil)
+	), ctMs, atMs, 0, h, nil, storage.AOptions{})
 	assert.NoError(t, err)
 
 	assert.NoError(t, tr.Commit())
@@ -496,7 +475,7 @@ func TestAppendExemplarInlineV2(t *testing.T) {
 		},
 	}
 
-	_, err := appendWithExemplarsV2(tr, 0, ls, ts, 100.0, exemplars)
+	_, err := tr.Append(0, ls, 0, ts, 100.0, nil, nil, storage.AOptions{Exemplars: exemplars})
 	assert.NoError(t, err)
 	assert.NoError(t, tr.Commit())
 

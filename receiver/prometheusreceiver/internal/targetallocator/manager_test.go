@@ -34,44 +34,44 @@ import (
 // nopAppendable is a minimal no-op implementation of storage.Appendable for tests. As scrape.NewManager() doesn't accept a nil value for both appendableV1 and appendableV2, we need to provide a minimal implementation.
 type nopAppendable struct{}
 
-func (n *nopAppendable) Appender(_ context.Context) storage.Appender {
+func (*nopAppendable) Appender(_ context.Context) storage.Appender {
 	return &nopAppender{}
 }
 
 type nopAppender struct{}
 
-func (n *nopAppender) Append(storage.SeriesRef, labels.Labels, int64, float64) (storage.SeriesRef, error) {
+func (*nopAppender) Append(storage.SeriesRef, labels.Labels, int64, float64) (storage.SeriesRef, error) {
 	return 0, nil
 }
 
-func (n *nopAppender) SetOptions(_ *storage.AppendOptions) {}
+func (*nopAppender) SetOptions(_ *storage.AppendOptions) {}
 
-func (n *nopAppender) AppendExemplar(storage.SeriesRef, labels.Labels, exemplar.Exemplar) (storage.SeriesRef, error) {
+func (*nopAppender) AppendExemplar(storage.SeriesRef, labels.Labels, exemplar.Exemplar) (storage.SeriesRef, error) {
 	return 0, nil
 }
 
-func (n *nopAppender) AppendHistogram(storage.SeriesRef, labels.Labels, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
+func (*nopAppender) AppendHistogram(storage.SeriesRef, labels.Labels, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
 	return 0, nil
 }
 
-func (n *nopAppender) AppendHistogramSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
+func (*nopAppender) AppendHistogramSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
 	return 0, nil
 }
 
-func (n *nopAppender) UpdateMetadata(storage.SeriesRef, labels.Labels, metadata.Metadata) (storage.SeriesRef, error) {
+func (*nopAppender) UpdateMetadata(storage.SeriesRef, labels.Labels, metadata.Metadata) (storage.SeriesRef, error) {
 	return 0, nil
 }
 
-func (n *nopAppender) AppendCTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
+func (*nopAppender) AppendCTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
 	return 0, nil
 }
 
-func (n *nopAppender) AppendSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
+func (*nopAppender) AppendSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
 	return 0, nil
 }
 
-func (n *nopAppender) Commit() error   { return nil }
-func (n *nopAppender) Rollback() error { return nil }
+func (*nopAppender) Commit() error   { return nil }
+func (*nopAppender) Rollback() error { return nil }
 
 func TestNewManager(t *testing.T) {
 	cfg := &Config{

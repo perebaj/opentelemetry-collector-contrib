@@ -356,9 +356,9 @@ func (r *pReceiver) initAPIServer(ctx context.Context, host component.Host) erro
 		o.STZeroIngestionEnabled,
 		5*time.Minute, // LookbackDelta - Using the default value of 5 minutes
 		o.EnableTypeAndUnitLabels,
-		false,                  // appendMetadata from remote write
-		nil,                    // OverrideErrorCode
-		nil,                    // FeatureRegistry
+		false,                   // appendMetadata from remote write
+		nil,                     // OverrideErrorCode
+		nil,                     // FeatureRegistry
 		api_v1.OpenAPIOptions{}, // OpenAPIOptions
 	)
 

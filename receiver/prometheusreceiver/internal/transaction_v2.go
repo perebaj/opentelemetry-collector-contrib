@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheus"
-	mdata "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver/internal/metadata"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
@@ -24,6 +22,9 @@ import (
 	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/receiverhelper"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheus"
+	mdata "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver/internal/metadata"
 )
 
 // transactionV2 is a wrapper around the transaction struct that implements the storage.AppenderV2 interface.
@@ -166,8 +167,8 @@ func (t *transactionV2) Append(
 			curMF.addCreationTimestamp(seriesRef, ls, atMs, stMs)
 		}
 
-		if err := curMF.addSeries(seriesRef, metricName, ls, atMs, val); err != nil {
-			t.logger.Warn("failed to add datapoint", zap.Error(err), zap.String("metric_name", metricName), zap.Any("labels", ls))
+		if addErr := curMF.addSeries(seriesRef, metricName, ls, atMs, val); addErr != nil {
+			t.logger.Warn("failed to add datapoint", zap.Error(addErr), zap.String("metric_name", metricName), zap.Any("labels", ls))
 			return 0, nil
 		}
 
