@@ -27,23 +27,22 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-// v2 helper wrappers to call the unified Append with the same ergonomics as v1.
+// v2 helper wrappers to call the unified Append with the same ergonomics as v1. Functions used to keep the tests backward compatible with the v1 tests.
 func appendV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, atMs int64, val float64) (storage.SeriesRef, error) {
 	return tr.Append(ref, ls, 0, atMs, val, nil, nil, storage.AOptions{})
 }
 
-func appendHistogramV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, atMs int64, h *histogram.Histogram, fh *histogram.FloatHistogram) (storage.SeriesRef, error) {
-	return tr.Append(ref, ls, 0, atMs, 0, h, fh, storage.AOptions{})
-}
-
+// appendWithSTZeroSampleV2 is a wrapper around the Append method that sets the start timestamp (stMs) to the value passed as parameter. Function used to keep the tests backward compatible with the v1 tests.
 func appendWithSTZeroSampleV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, stMs, atMs int64, val float64) (storage.SeriesRef, error) {
 	return tr.Append(ref, ls, stMs, atMs, val, nil, nil, storage.AOptions{})
 }
 
+// appendHistogramWithSTZeroSampleV2 is a wrapper around the Append method that sets the start timestamp (stMs) to the value passed as parameter. Function used to keep the tests backward compatible with the v1 tests.
 func appendHistogramWithSTZeroSampleV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, stMs, atMs int64, h *histogram.Histogram, fh *histogram.FloatHistogram) (storage.SeriesRef, error) {
 	return tr.Append(ref, ls, stMs, atMs, 0, h, fh, storage.AOptions{})
 }
 
+// appendWithExemplarsV2 is a wrapper around the Append method that sets the exemplars to the value passed as parameter. Function used to keep the tests backward compatible with the v1 tests.
 func appendWithExemplarsV2(tr *transactionV2, ref storage.SeriesRef, ls labels.Labels, atMs int64, val float64, exemplars []exemplar.Exemplar) (storage.SeriesRef, error) {
 	return tr.Append(ref, ls, 0, atMs, val, nil, nil, storage.AOptions{Exemplars: exemplars})
 }
