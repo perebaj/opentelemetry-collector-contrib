@@ -4,6 +4,7 @@
 package targetallocator
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,12 @@ import (
 	"github.com/prometheus/common/promslog"
 	promconfig "github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/discovery"
+	"github.com/prometheus/prometheus/model/exemplar"
+	"github.com/prometheus/prometheus/model/histogram"
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/model/metadata"
 	"github.com/prometheus/prometheus/scrape"
+	"github.com/prometheus/prometheus/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component/componenttest"
@@ -22,8 +28,50 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver/internal/metadata"
+	otmetadata "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver/internal/metadata"
 )
+
+// nopAppendable is a minimal no-op implementation of storage.Appendable for tests. As scrape.NewManager() doesn't accept a nil value for both appendableV1 and appendableV2, we need to provide a minimal implementation.
+type nopAppendable struct{}
+
+func (n *nopAppendable) Appender(_ context.Context) storage.Appender {
+	return &nopAppender{}
+}
+
+type nopAppender struct{}
+
+func (n *nopAppender) Append(storage.SeriesRef, labels.Labels, int64, float64) (storage.SeriesRef, error) {
+	return 0, nil
+}
+
+func (n *nopAppender) SetOptions(_ *storage.AppendOptions) {}
+
+func (n *nopAppender) AppendExemplar(storage.SeriesRef, labels.Labels, exemplar.Exemplar) (storage.SeriesRef, error) {
+	return 0, nil
+}
+
+func (n *nopAppender) AppendHistogram(storage.SeriesRef, labels.Labels, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
+	return 0, nil
+}
+
+func (n *nopAppender) AppendHistogramSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
+	return 0, nil
+}
+
+func (n *nopAppender) UpdateMetadata(storage.SeriesRef, labels.Labels, metadata.Metadata) (storage.SeriesRef, error) {
+	return 0, nil
+}
+
+func (n *nopAppender) AppendCTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
+	return 0, nil
+}
+
+func (n *nopAppender) AppendSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
+	return 0, nil
+}
+
+func (n *nopAppender) Commit() error   { return nil }
+func (n *nopAppender) Rollback() error { return nil }
 
 func TestNewManager(t *testing.T) {
 	cfg := &Config{
@@ -36,7 +84,7 @@ func TestNewManager(t *testing.T) {
 		},
 	}
 
-	manager := NewManager(receivertest.NewNopSettings(metadata.Type), cfg, promCfg)
+	manager := NewManager(receivertest.NewNopSettings(otmetadata.Type), cfg, promCfg)
 
 	assert.NotNil(t, manager)
 	assert.Equal(t, cfg, manager.cfg)
@@ -67,7 +115,7 @@ func TestManagerShutdown(t *testing.T) {
 	// Create a logger with observer to capture logs
 	core, logs := observer.New(zapcore.InfoLevel)
 	logger := zap.New(core)
-	settings := receivertest.NewNopSettings(metadata.Type)
+	settings := receivertest.NewNopSettings(otmetadata.Type)
 	settings.Logger = logger
 
 	manager := NewManager(settings, cfg, promCfg)
@@ -83,7 +131,7 @@ func TestManagerShutdown(t *testing.T) {
 	discoveryManager := discovery.NewManager(ctx, promLogger, reg, sdMetrics)
 	require.NotNil(t, discoveryManager)
 
-	scrapeManager, err := scrape.NewManager(&scrape.Options{}, promLogger, nil, nil, reg)
+	scrapeManager, err := scrape.NewManager(&scrape.Options{}, promLogger, nil, &nopAppendable{}, nil, reg)
 	require.NoError(t, err)
 	defer scrapeManager.Stop()
 

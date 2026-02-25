@@ -19,6 +19,15 @@ tests:
         - "go.opencensus.io/stats/view.(*worker).start"
 
 feature_gates:
+  - id: receiver.prometheusreceiver.EnableAppenderV2
+    stage: alpha
+    description: >-
+      When enabled, uses the new Prometheus AppenderV2 interface for scraping metrics.
+      AppenderV2 delivers metadata and exemplars inline with each sample, eliminating
+      the PassMetadataInContext hack and simplifying the translation pipeline.
+    from_version: v0.147.0
+    reference_url: https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/45597
+
   - id: receiver.prometheusreceiver.EnableCreatedTimestampZeroIngestion
     stage: alpha
     description: >-

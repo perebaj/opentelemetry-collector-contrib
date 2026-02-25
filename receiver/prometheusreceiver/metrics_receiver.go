@@ -202,7 +202,7 @@ func (r *pReceiver) initPrometheusComponents(
 			Set(reflect.ValueOf(true))
 	}
 
-	scrapeManager, err := scrape.NewManager(scrapeOpts, logger, nil, store, r.registerer)
+	scrapeManager, err := scrape.NewManager(scrapeOpts, logger, nil, store, nil, r.registerer)
 	if err != nil {
 		return err
 	}
@@ -297,7 +297,7 @@ func (r *pReceiver) initAPIServer(ctx context.Context, host component.Host) erro
 	var app storage.Appendable
 	logger := promslog.NewNopLogger()
 
-	apiV1 := api_v1.NewAPI(o.QueryEngine, o.Storage, app, o.ExemplarStorage, factorySPr, factoryTr, factoryAr,
+	apiV1 := api_v1.NewAPI(o.QueryEngine, o.Storage, app, nil, o.ExemplarStorage, factorySPr, factoryTr, factoryAr,
 
 		// This ensures that any changes to the config made, even by the target allocator, are reflected in the API.
 		func() promconfig.Config {
@@ -314,14 +314,14 @@ func (r *pReceiver) initAPIServer(ctx context.Context, host component.Host) erro
 				f(w, r)
 			}
 		},
-		o.LocalStorage,   // nil
-		o.TSDBDir,        // nil
-		o.EnableAdminAPI, // nil
+		nil,              // TSDBAdminStats
+		o.TSDBDir,        // ""
+		o.EnableAdminAPI, // false
 		logger,
 		factoryRr,
-		o.RemoteReadSampleLimit,      // nil
-		o.RemoteReadConcurrencyLimit, // nil
-		o.RemoteReadBytesInFrame,     // nil
+		o.RemoteReadSampleLimit,      // 0
+		o.RemoteReadConcurrencyLimit, // 0
+		o.RemoteReadBytesInFrame,     // 0
 		o.IsAgent,
 		o.CORSOrigin,
 		func() (api_v1.RuntimeInfo, error) {
@@ -356,9 +356,10 @@ func (r *pReceiver) initAPIServer(ctx context.Context, host component.Host) erro
 		o.STZeroIngestionEnabled,
 		5*time.Minute, // LookbackDelta - Using the default value of 5 minutes
 		o.EnableTypeAndUnitLabels,
-		false, // appendMetadata from remote write
-		nil,   // OverrideErrorCode
-		nil,   // FeatureRegistry
+		false,                  // appendMetadata from remote write
+		nil,                    // OverrideErrorCode
+		nil,                    // FeatureRegistry
+		api_v1.OpenAPIOptions{}, // OpenAPIOptions
 	)
 
 	// Create listener and monitor with conntrack in the same way as the Prometheus web package: https://github.com/prometheus/prometheus/blob/6150e1ca0ede508e56414363cc9062ef522db518/web/web.go#L564-L579
