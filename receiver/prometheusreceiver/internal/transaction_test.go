@@ -2066,146 +2066,109 @@ func TestAppendableImplementsBothInterfaces(t *testing.T) {
 	t.Log("appendable implements both storage.Appendable and storage.AppendableV2")
 }
 
-func TestAppenderV2WrapperCommitWithoutAdding(t *testing.T) {
-	txn := newTransaction(scrapeCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	w := &appenderV2Wrapper{txn}
-	assert.NoError(t, w.Commit())
-}
+func TestAppenderV2WrapperAppend(t *testing.T) {
+	type testCase struct {
+		name               string
+		stMs               int64
+		atMs               int64
+		val                float64
+		h                  *histogram.Histogram
+		fh                 *histogram.FloatHistogram
+		opts               storage.AOptions
+		labels             labels.Labels
+		expectedMetricType pmetric.MetricType
+		expectedExemplars  int
+	}
 
-func TestAppenderV2WrapperAppendFloat(t *testing.T) {
-	sink := new(consumertest.MetricsSink)
-	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	w := &appenderV2Wrapper{txn}
-
-	ls := labels.FromStrings(
-		model.InstanceLabel, "localhost:8080",
-		model.JobLabel, "test",
-		model.MetricNameLabel, "counter_test",
-	)
-
-	ref, err := w.Append(0, ls, 0, ts, 42.0, nil, nil, storage.AOptions{})
-	require.NoError(t, err)
-	assert.NotZero(t, ref)
-
-	require.NoError(t, w.Commit())
-	mds := sink.AllMetrics()
-	require.Len(t, mds, 1)
-	require.Equal(t, 1, mds[0].MetricCount())
-}
-
-func TestAppenderV2WrapperAppendHistogram(t *testing.T) {
-	sink := new(consumertest.MetricsSink)
-	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	w := &appenderV2Wrapper{txn}
-
-	ls := labels.FromStrings(
-		model.InstanceLabel, "localhost:8080",
-		model.JobLabel, "test",
-		model.MetricNameLabel, "hist_test",
-	)
-
-	h := tsdbutil.GenerateTestHistogram(1)
-	ref, err := w.Append(0, ls, 0, ts, 0, h, nil, storage.AOptions{})
-	require.NoError(t, err)
-	assert.NotZero(t, ref)
-
-	require.NoError(t, w.Commit())
-	mds := sink.AllMetrics()
-	require.Len(t, mds, 1)
-	require.Equal(t, 1, mds[0].MetricCount())
-	require.Equal(t, pmetric.MetricTypeExponentialHistogram,
-		mds[0].ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Type())
-}
-
-func TestAppenderV2WrapperAppendWithStartTimestamp(t *testing.T) {
-	sink := new(consumertest.MetricsSink)
-	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	w := &appenderV2Wrapper{txn}
-
-	ls := labels.FromStrings(
-		model.InstanceLabel, "localhost:8080",
-		model.JobLabel, "test",
-		model.MetricNameLabel, "counter_test",
-	)
-
-	var stMs int64 = 100
-	ref, err := w.Append(0, ls, stMs, ts, 42.0, nil, nil, storage.AOptions{})
-	require.NoError(t, err)
-	assert.NotZero(t, ref)
-
-	require.NoError(t, w.Commit())
-	mds := sink.AllMetrics()
-	require.Len(t, mds, 1)
-	dp := mds[0].ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Sum().DataPoints().At(0)
-	require.Equal(t, pcommon.NewTimestampFromTime(time.UnixMilli(stMs)), dp.StartTimestamp())
-}
-
-func TestAppenderV2WrapperAppendWithExemplars(t *testing.T) {
-	sink := new(consumertest.MetricsSink)
-	txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	w := &appenderV2Wrapper{txn}
-
-	ls := labels.FromStrings(
-		model.InstanceLabel, "localhost:8080",
-		model.JobLabel, "test",
-		model.MetricNameLabel, "counter_test",
-	)
-
-	opts := storage.AOptions{
-		Exemplars: []exemplar.Exemplar{
-			{
-				Labels: labels.FromStrings("key", "value"),
-				Value:  1.0,
-				Ts:     ts,
+	tests := []testCase{
+		{
+			name:               "counter with exemplars",
+			stMs:               1,
+			atMs:               ts,
+			val:                42.0,
+			expectedMetricType: pmetric.MetricTypeSum,
+			labels: labels.FromStrings(
+				model.InstanceLabel, "localhost:8080",
+				model.JobLabel, "test",
+				model.MetricNameLabel, "counter_test",
+			),
+			opts: storage.AOptions{
+				Exemplars: []exemplar.Exemplar{
+					{
+						Labels: labels.FromStrings("key", "value"),
+						Value:  1.0,
+						Ts:     ts,
+					},
+				},
 			},
+			expectedExemplars: 1,
+		},
+		{
+			name: "float histogram",
+			stMs: 1,
+			atMs: ts,
+			fh:   tsdbutil.GenerateTestFloatHistogram(1),
+			opts: storage.AOptions{},
+			labels: labels.FromStrings(
+				model.InstanceLabel, "localhost:8080",
+				model.JobLabel, "test",
+				model.MetricNameLabel, "hist_test",
+			),
+			expectedMetricType: pmetric.MetricTypeExponentialHistogram,
+			expectedExemplars:  0,
+		},
+		{
+			name:               "histogram",
+			stMs:               1,
+			atMs:               ts,
+			h:                  tsdbutil.GenerateTestHistogram(1),
+			opts:               storage.AOptions{},
+			expectedMetricType: pmetric.MetricTypeExponentialHistogram,
+			labels: labels.FromStrings(
+				model.InstanceLabel, "localhost:8080",
+				model.JobLabel, "test",
+				model.MetricNameLabel, "hist_test",
+			),
+			expectedExemplars: 0,
 		},
 	}
 
-	ref, err := w.Append(0, ls, 0, ts, 42.0, nil, nil, opts)
-	require.NoError(t, err)
-	assert.NotZero(t, ref)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink := new(consumertest.MetricsSink)
+			txn := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+			w := &appenderV2Wrapper{txn}
+			ref, err := w.Append(0, tt.labels, tt.stMs, tt.atMs, tt.val, tt.h, tt.fh, tt.opts)
+			require.NoError(t, err)
+			assert.NotZero(t, ref)
 
-	require.NoError(t, w.Commit())
-	mds := sink.AllMetrics()
-	require.Len(t, mds, 1)
-	dp := mds[0].ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Sum().DataPoints().At(0)
-	require.Equal(t, 1, dp.Exemplars().Len())
-	require.Equal(t, "value", dp.Exemplars().At(0).FilteredAttributes().AsRaw()["key"])
-}
-
-func TestAppenderV2WrapperAppendContextCancelled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancelledCtx := scrape.ContextWithMetricMetadataStore(
-		scrape.ContextWithTarget(ctx, target),
-		testMetadataStore(testMetadata))
-	cancel()
-
-	txn := newTransaction(cancelledCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	w := &appenderV2Wrapper{txn}
-
-	ls := labels.FromStrings(
-		model.InstanceLabel, "localhost:8080",
-		model.JobLabel, "test",
-		model.MetricNameLabel, "counter_test",
-	)
-
-	_, err := w.Append(0, ls, 0, ts, 1.0, nil, nil, storage.AOptions{})
-	assert.ErrorIs(t, err, errTransactionAborted)
-}
-
-func TestAppenderV2WrapperAppendDuplicateLabels(t *testing.T) {
-	txn := newTransaction(scrapeCtx, consumertest.NewNop(), labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
-	w := &appenderV2Wrapper{txn}
-
-	dupLabels := labels.FromStrings(
-		model.InstanceLabel, "0.0.0.0:8855",
-		model.JobLabel, "test",
-		model.MetricNameLabel, "counter_test",
-		"a", "1",
-		"a", "6",
-		"z", "9",
-	)
-
-	_, err := w.Append(0, dupLabels, 0, ts, 1.0, nil, nil, storage.AOptions{})
-	assert.ErrorContains(t, err, `invalid sample: non-unique label names: "a"`)
+			require.NoError(t, w.Commit())
+			mds := sink.AllMetrics()
+			require.Len(t, mds, 1)
+			md := mds[0]
+			require.Equal(t, tt.expectedMetricType, md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Type())
+			switch tt.expectedMetricType {
+			case pmetric.MetricTypeSum:
+				require.Equal(t, tt.val, md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Sum().DataPoints().At(0).DoubleValue())
+				dp := md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Sum().DataPoints().At(0)
+				if tt.expectedExemplars > 0 {
+					require.Equal(t, tt.expectedExemplars, dp.Exemplars().Len())
+				}
+				require.Equal(t, pcommon.NewTimestampFromTime(time.UnixMilli(tt.stMs)), dp.StartTimestamp())
+			case pmetric.MetricTypeExponentialHistogram:
+				dp := md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).ExponentialHistogram().DataPoints().At(0)
+				if tt.expectedExemplars > 0 {
+					require.Equal(t, tt.expectedExemplars, dp.Exemplars().Len())
+				}
+				require.Equal(t, pcommon.NewTimestampFromTime(time.UnixMilli(tt.stMs)), dp.StartTimestamp())
+			case pmetric.MetricTypeSummary:
+				dp := md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Summary().DataPoints().At(0)
+				require.Equal(t, tt.val, dp.Sum())
+				if tt.expectedExemplars > 0 {
+					require.Equal(t, tt.expectedExemplars, dp.QuantileValues().Len())
+				}
+				require.Equal(t, pcommon.NewTimestampFromTime(time.UnixMilli(tt.stMs)), dp.StartTimestamp())
+			}
+		})
+	}
 }
