@@ -6,14 +6,6 @@ import (
 	"go.opentelemetry.io/collector/featuregate"
 )
 
-var ReceiverPrometheusreceiverEnableAppenderV2FeatureGate = featuregate.GlobalRegistry().MustRegister(
-	"receiver.prometheusreceiver.EnableAppenderV2",
-	featuregate.StageAlpha,
-	featuregate.WithRegisterDescription("When enabled, uses the new Prometheus AppenderV2 interface for scraping metrics. AppenderV2 delivers metadata and exemplars inline with each sample, eliminating the PassMetadataInContext hack and simplifying the translation pipeline."),
-	featuregate.WithRegisterReferenceURL("https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/45597"),
-	featuregate.WithRegisterFromVersion("v0.147.0"),
-)
-
 var ReceiverPrometheusreceiverEnableCreatedTimestampZeroIngestionFeatureGate = featuregate.GlobalRegistry().MustRegister(
 	"receiver.prometheusreceiver.EnableCreatedTimestampZeroIngestion",
 	featuregate.StageAlpha,

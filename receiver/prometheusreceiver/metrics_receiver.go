@@ -202,14 +202,7 @@ func (r *pReceiver) initPrometheusComponents(
 			Set(reflect.ValueOf(true))
 	}
 
-	var v1Appendable storage.Appendable
-	var v2Appendable storage.AppendableV2
-	if metadata.ReceiverPrometheusreceiverEnableAppenderV2FeatureGate.IsEnabled() {
-		v2Appendable = store
-	} else {
-		v1Appendable = store
-	}
-	scrapeManager, err := scrape.NewManager(scrapeOpts, logger, nil, v1Appendable, v2Appendable, r.registerer)
+	scrapeManager, err := scrape.NewManager(scrapeOpts, logger, nil, nil, store, r.registerer)
 	if err != nil {
 		return err
 	}
