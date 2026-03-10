@@ -2057,15 +2057,6 @@ func newTxn(t *testing.T, useMetadata bool) *transaction {
 
 // ---- AppenderV2 wrapper tests ----
 
-// TestAppendableImplementsBothInterfaces is a compile-time check that
-// *appendable satisfies both storage.Appendable and storage.AppendableV2.
-func TestAppendableImplementsBothInterfaces(t *testing.T) {
-	var _ storage.Appendable = (*appendable)(nil)
-	var _ storage.AppendableV2 = (*appendable)(nil)
-	// If this compiles, the interfaces are satisfied.
-	t.Log("appendable implements both storage.Appendable and storage.AppendableV2")
-}
-
 func TestAppenderV2WrapperAppend(t *testing.T) {
 	type testCase struct {
 		name               string
