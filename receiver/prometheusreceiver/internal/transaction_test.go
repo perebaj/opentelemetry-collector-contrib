@@ -1899,26 +1899,16 @@ func (tt buildTestData) run(t *testing.T) {
 	for i, page := range tt.inputs {
 		sink := new(consumertest.MetricsSink)
 		tr := newTransaction(scrapeCtx, sink, labels.EmptyLabels(), receivertest.NewNopSettings(receivertest.NopType), nopObsRecv(t), false, true)
+		w := &appenderV2Wrapper{tr}
 		for _, pt := range page.pts {
 			// set ts for testing
 			pt.t = st
-			var err error
-			switch {
-			case pt.fh != nil:
-				_, err = tr.AppendHistogram(0, pt.lb, pt.t, nil, pt.fh)
-			case pt.h != nil:
-				_, err = tr.AppendHistogram(0, pt.lb, pt.t, pt.h, nil)
-			default:
-				_, err = tr.Append(0, pt.lb, pt.t, pt.v)
-			}
+			_, err := w.Append(0, pt.lb, 0, pt.t, pt.v, pt.h, pt.fh, storage.AOptions{
+				Exemplars: pt.exemplars,
+			})
 			assert.NoError(t, err)
-
-			for _, e := range pt.exemplars {
-				_, err := tr.AppendExemplar(0, pt.lb, e)
-				assert.NoError(t, err)
-			}
 		}
-		assert.NoError(t, tr.Commit())
+		assert.NoError(t, w.Commit())
 		mds := sink.AllMetrics()
 		if wants[i].ResourceMetrics().Len() == 0 {
 			// Receiver does not emit empty metrics, so will not have anything in the sink.
@@ -2121,8 +2111,15 @@ func newTxn(t *testing.T, useMetadata bool) *transaction {
 }
 
 // ---- AppenderV2 wrapper tests ----
+//
+// These tests validate the V2 append surface used by Prometheus:
+// appenderV2Wrapper.Append(...) -> transaction.AppendV2(...).
+//
+// Some tests in this file still call transaction methods directly because they
+// validate method-specific behavior that is not exposed as independent calls in
+// the V2 interface (for example, direct AppendExemplar/STZero contract checks).
 
-func TestAppenderV2WrapperAppend(t *testing.T) {
+func TestTransactionAppenderV2WrapperAppend(t *testing.T) {
 	type testCase struct {
 		name               string
 		stMs               int64
