@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/scrape"
+	"github.com/prometheus/prometheus/storage"
 )
 
 func BenchmarkAppendWithCreatedLine(b *testing.B) {
@@ -24,15 +25,16 @@ func BenchmarkAppendWithCreatedLine(b *testing.B) {
 		for b.Loop() {
 			b.StopTimer()
 			tx := newBenchmarkTransactionForOMCounterBenchmarking(b)
+			w := &appenderV2Wrapper{tx}
 			b.StartTimer()
 
 			for j, ls := range labelSets {
 				value := float64(j)
-				_, err := tx.Append(0, ls[0], timestamp, value)
+				_, err := w.Append(0, ls[0], 0, timestamp, value, nil, nil, storage.AOptions{})
 				if err != nil {
 					b.Fatal(err)
 				}
-				_, err = tx.Append(0, ls[1], timestamp, ctValue)
+				_, err = w.Append(0, ls[1], 0, timestamp, ctValue, nil, nil, storage.AOptions{})
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -46,15 +48,16 @@ func BenchmarkAppendWithCreatedLine(b *testing.B) {
 		for b.Loop() {
 			b.StopTimer()
 			tx := newBenchmarkTransactionForOMCounterBenchmarking(b)
+			w := &appenderV2Wrapper{tx}
 			b.StartTimer()
 
 			for j, ls := range labelSets {
 				value := float64(j)
-				_, err := tx.Append(0, ls[0], timestamp, value)
+				_, err := w.Append(0, ls[0], 0, timestamp, value, nil, nil, storage.AOptions{})
 				if err != nil {
 					b.Fatal(err)
 				}
-				_, err = tx.AppendSTZeroSample(0, ls[1], timestamp, int64(ctValue))
+				_, err = w.Append(0, ls[1], int64(ctValue), timestamp, 0, nil, nil, storage.AOptions{})
 				if err != nil {
 					b.Fatal(err)
 				}
