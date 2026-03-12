@@ -643,35 +643,127 @@ func getSeriesRef(bytes []byte, ls labels.Labels, mtype pmetric.MetricType) (uin
 
 // Append implements storage.AppenderV2.
 func (t *transaction) AppendV2(ref storage.SeriesRef, ls labels.Labels, stMs, atMs int64, val float64, h *histogram.Histogram, fh *histogram.FloatHistogram, opts storage.AOptions) (storage.SeriesRef, error) {
+	originalLS := ls
 	isHistogram := h != nil || fh != nil
 	var sRef storage.SeriesRef
-	var err error
-	// set timestamp if provided
-	if stMs > 0 {
-		if isHistogram {
-			_, err = t.AppendHistogramSTZeroSample(ref, ls, atMs, stMs, h, fh)
-			if err != nil {
-				return 0, err
-			}
+
+	select {
+	case <-t.ctx.Done():
+		return 0, errTransactionAborted
+	default:
+	}
+
+	if t.externalLabels.Len() != 0 {
+		b := labels.NewBuilder(ls)
+		t.externalLabels.Range(func(l labels.Label) {
+			b.Set(l.Name, l.Value)
+		})
+		ls = b.Labels()
+	}
+
+	rKey, err := t.initTransaction(ls)
+	if err != nil {
+		return 0, err
+	}
+
+	if dupLabel, hasDup := ls.HasDuplicateLabelNames(); hasDup {
+		return 0, fmt.Errorf("invalid sample: non-unique label names: %q", dupLabel)
+	}
+
+	metricName := ls.Get(model.MetricNameLabel)
+	if metricName == "" {
+		return 0, errMetricNameNotFound
+	}
+
+	if isHistogram {
+		var schema int32
+		if h != nil {
+			schema = h.Schema
 		} else {
-			if _, err = t.AppendSTZeroSample(ref, ls, atMs, stMs); err != nil {
-				return 0, err
+			schema = fh.Schema
+		}
+		t.addingNativeHistogram = true
+		t.addingNHCB = schema == -53
+
+		curMF := t.getOrCreateMetricFamily(*rKey, getScopeID(ls), metricName)
+		seriesRef := t.getSeriesRef(ls, curMF.mtype)
+
+		if stMs > 0 {
+			curMF.addCreationTimestamp(seriesRef, ls, atMs, stMs)
+		}
+
+		if h != nil && h.CounterResetHint == histogram.GaugeType || fh != nil && fh.CounterResetHint == histogram.GaugeType {
+			t.logger.Warn("dropping unsupported gauge histogram datapoint", zap.String("metric_name", metricName), zap.Any("labels", ls))
+		}
+
+		if schema == -53 {
+			err = curMF.addNHCBSeries(seriesRef, metricName, ls, atMs, h, fh)
+		} else {
+			err = curMF.addExponentialHistogramSeries(seriesRef, metricName, ls, atMs, h, fh)
+		}
+		if err != nil {
+			t.logger.Warn("failed to add histogram datapoint", zap.Error(err), zap.String("metric_name", metricName), zap.Any("labels", ls))
+			sRef = 0
+		} else {
+			sRef = storage.SeriesRef(ls.Hash())
+		}
+	} else {
+		t.addingNativeHistogram = false
+		t.addingNHCB = false
+		scope := getScopeID(ls)
+		var curMF *metricFamily
+		var seriesRef uint64
+
+		if stMs > 0 {
+			curMF = t.getOrCreateMetricFamily(*rKey, scope, metricName)
+			seriesRef = t.getSeriesRef(ls, curMF.mtype)
+			curMF.addCreationTimestamp(seriesRef, ls, atMs, stMs)
+		}
+
+		// See https://www.prometheus.io/docs/concepts/jobs_instances/#automatically-generated-labels-and-time-series
+		// up: 1 if the instance is healthy, i.e. reachable, or 0 if the scrape failed.
+		// But it can also be a staleNaN, which is inserted when the target goes away.
+		if metricName == scrapeUpMetricName && val != 1.0 && !value.IsStaleNaN(val) {
+			if val == 0.0 {
+				t.logger.Warn("Failed to scrape Prometheus endpoint",
+					zap.Int64("scrape_timestamp", atMs),
+					zap.Stringer("target_labels", ls))
+			} else {
+				t.logger.Warn("The 'up' metric contains invalid value",
+					zap.Float64("value", val),
+					zap.Int64("scrape_timestamp", atMs),
+					zap.Stringer("target_labels", ls))
+			}
+		}
+
+		// For the `target_info` metric we need to convert it to resource attributes.
+		if metricName == prometheus.TargetInfoMetricName {
+			t.AddTargetInfo(*rKey, ls)
+			sRef = 0
+		} else if metricName == prometheus.ScopeInfoMetricName {
+			// For the `otel_scope_info` metric we need to convert it to scope attributes.
+			t.addScopeInfo(*rKey, ls)
+			sRef = 0
+		} else if value.IsStaleNaN(val) && t.detectAndStoreNativeHistogramStaleness(atMs, rKey, scope, metricName, ls) {
+			sRef = 0
+		} else {
+			if curMF == nil {
+				curMF = t.getOrCreateMetricFamily(*rKey, scope, metricName)
+				seriesRef = t.getSeriesRef(ls, curMF.mtype)
+			}
+			err = curMF.addSeries(seriesRef, metricName, ls, atMs, val)
+			if err != nil {
+				t.logger.Warn("failed to add datapoint", zap.Error(err), zap.String("metric_name", metricName), zap.Any("labels", ls))
+				sRef = 0
+			} else {
+				sRef = storage.SeriesRef(ls.Hash())
 			}
 		}
 	}
 
-	if isHistogram {
-		sRef, err = t.AppendHistogram(ref, ls, atMs, h, fh)
-	} else {
-		sRef, err = t.Append(ref, ls, atMs, val)
-	}
-	if err != nil {
-		return sRef, err
-	}
-
 	// append the exemplars
 	for _, exemplar := range opts.Exemplars {
-		if _, err := t.AppendExemplar(sRef, ls, exemplar); err != nil {
+		if _, err := t.AppendExemplar(sRef, originalLS, exemplar); err != nil {
 			return 0, err
 		}
 	}
