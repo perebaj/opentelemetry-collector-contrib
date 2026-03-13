@@ -53,11 +53,10 @@ func BenchmarkAppendWithCreatedLine(b *testing.B) {
 
 			for j, ls := range labelSets {
 				value := float64(j)
-				_, err := w.Append(0, ls[0], 0, timestamp, value, nil, nil, storage.AOptions{})
-				if err != nil {
-					b.Fatal(err)
-				}
-				_, err = w.Append(0, ls[1], int64(ctValue), timestamp, 0, nil, nil, storage.AOptions{})
+				// In AppenderV2 the start timestamp is carried on the datapoint append
+				// call itself. This models the _created-derived start time without an
+				// additional synthetic append for the _created line.
+				_, err := w.Append(0, ls[0], int64(ctValue), timestamp, value, nil, nil, storage.AOptions{})
 				if err != nil {
 					b.Fatal(err)
 				}

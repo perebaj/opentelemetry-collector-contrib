@@ -4,7 +4,6 @@
 package targetallocator
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,12 +13,8 @@ import (
 	"github.com/prometheus/common/promslog"
 	promconfig "github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/discovery"
-	"github.com/prometheus/prometheus/model/exemplar"
-	"github.com/prometheus/prometheus/model/histogram"
-	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/model/metadata"
 	"github.com/prometheus/prometheus/scrape"
-	"github.com/prometheus/prometheus/storage"
+	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component/componenttest"
@@ -30,48 +25,6 @@ import (
 
 	mdata "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver/internal/metadata"
 )
-
-// nopAppendable is a minimal no-op implementation of storage.Appendable for tests. As scrape.NewManager() doesn't accept a nil value for both appendableV1 and appendableV2, we need to provide a minimal implementation.
-type nopAppendable struct{}
-
-func (*nopAppendable) Appender(_ context.Context) storage.Appender {
-	return &nopAppender{}
-}
-
-type nopAppender struct{}
-
-func (*nopAppender) Append(storage.SeriesRef, labels.Labels, int64, float64) (storage.SeriesRef, error) {
-	return 0, nil
-}
-
-func (*nopAppender) SetOptions(_ *storage.AppendOptions) {}
-
-func (*nopAppender) AppendExemplar(storage.SeriesRef, labels.Labels, exemplar.Exemplar) (storage.SeriesRef, error) {
-	return 0, nil
-}
-
-func (*nopAppender) AppendHistogram(storage.SeriesRef, labels.Labels, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
-	return 0, nil
-}
-
-func (*nopAppender) AppendHistogramSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64, *histogram.Histogram, *histogram.FloatHistogram) (storage.SeriesRef, error) {
-	return 0, nil
-}
-
-func (*nopAppender) UpdateMetadata(storage.SeriesRef, labels.Labels, metadata.Metadata) (storage.SeriesRef, error) {
-	return 0, nil
-}
-
-func (*nopAppender) AppendCTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
-	return 0, nil
-}
-
-func (*nopAppender) AppendSTZeroSample(storage.SeriesRef, labels.Labels, int64, int64) (storage.SeriesRef, error) {
-	return 0, nil
-}
-
-func (*nopAppender) Commit() error   { return nil }
-func (*nopAppender) Rollback() error { return nil }
 
 func TestNewManager(t *testing.T) {
 	cfg := &Config{
@@ -131,7 +84,8 @@ func TestManagerShutdown(t *testing.T) {
 	discoveryManager := discovery.NewManager(ctx, promLogger, reg, sdMetrics)
 	require.NotNil(t, discoveryManager)
 
-	scrapeManager, err := scrape.NewManager(&scrape.Options{}, promLogger, nil, &nopAppendable{}, nil, reg)
+	store := teststorage.New(t)
+	scrapeManager, err := scrape.NewManager(&scrape.Options{}, promLogger, nil, nil, store, reg)
 	require.NoError(t, err)
 	defer scrapeManager.Stop()
 

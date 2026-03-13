@@ -642,7 +642,7 @@ func getSeriesRef(bytes []byte, ls labels.Labels, mtype pmetric.MetricType) (uin
 }
 
 // Append implements storage.AppenderV2.
-func (t *transaction) AppendV2(ref storage.SeriesRef, ls labels.Labels, stMs, atMs int64, val float64, h *histogram.Histogram, fh *histogram.FloatHistogram, opts storage.AOptions) (storage.SeriesRef, error) {
+func (t *transaction) AppendV2(_ storage.SeriesRef, ls labels.Labels, stMs, atMs int64, val float64, h *histogram.Histogram, fh *histogram.FloatHistogram, opts storage.AOptions) (storage.SeriesRef, error) {
 	originalLS := ls
 	isHistogram := h != nil || fh != nil
 	var sRef storage.SeriesRef
@@ -736,17 +736,18 @@ func (t *transaction) AppendV2(ref storage.SeriesRef, ls labels.Labels, stMs, at
 			}
 		}
 
-		// For the `target_info` metric we need to convert it to resource attributes.
-		if metricName == prometheus.TargetInfoMetricName {
+		switch {
+		case metricName == prometheus.TargetInfoMetricName:
+			// For the `target_info` metric we need to convert it to resource attributes.
 			t.AddTargetInfo(*rKey, ls)
 			sRef = 0
-		} else if metricName == prometheus.ScopeInfoMetricName {
+		case metricName == prometheus.ScopeInfoMetricName:
 			// For the `otel_scope_info` metric we need to convert it to scope attributes.
 			t.addScopeInfo(*rKey, ls)
 			sRef = 0
-		} else if value.IsStaleNaN(val) && t.detectAndStoreNativeHistogramStaleness(atMs, rKey, scope, metricName, ls) {
+		case value.IsStaleNaN(val) && t.detectAndStoreNativeHistogramStaleness(atMs, rKey, scope, metricName, ls):
 			sRef = 0
-		} else {
+		default:
 			if curMF == nil {
 				curMF = t.getOrCreateMetricFamily(*rKey, scope, metricName)
 				seriesRef = t.getSeriesRef(ls, curMF.mtype)
